@@ -2,6 +2,9 @@ package spark.servlet;
 
 import java.io.File;
 import java.io.FileWriter;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import static spark.Spark.after;
 import static spark.Spark.before;
@@ -16,6 +19,10 @@ public class MyApp implements SparkApplication {
     public static final String EXTERNAL_FILE = "externalFileServlet.html";
 
     static File tmpExternalFile;
+
+    public static void main(String args[]){
+        new MyApp().init();
+    }
 
     @Override
     public synchronized void init() {
@@ -40,8 +47,23 @@ public class MyApp implements SparkApplication {
             return "Hello World!";
         });
 
-        get("/:param", (request, response) -> {
-            return "echo: " + request.params(":param");
+//        get("/:param", (request, response) -> {
+//            return "echo: " + request.params(":param");
+//        });
+
+        final ExecutorService executorService = Executors.newFixedThreadPool(10);
+
+        get("/async", (request, response) -> {
+            CompletableFuture<String> completableFuture
+                = new CompletableFuture<>();
+
+            executorService.submit(() -> {
+                Thread.sleep(1000);
+                completableFuture.complete("Hello async!");
+                return null;
+            });
+
+            return completableFuture;
         });
 
         get("/", (request, response) -> {

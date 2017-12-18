@@ -142,6 +142,7 @@ public class SparkFilter implements Filter {
     public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) throws
                                                                                               IOException,
                                                                                               ServletException {
+        System.out.println("spark filter");
         HttpServletRequest httpRequest = (HttpServletRequest) request; // NOSONAR
         HttpServletResponse httpResponse = (HttpServletResponse) response; // NOSONAR
 

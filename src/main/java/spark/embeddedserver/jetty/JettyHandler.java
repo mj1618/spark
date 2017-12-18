@@ -45,7 +45,7 @@ public class JettyHandler extends SessionHandler {
             Request baseRequest,
             HttpServletRequest request,
             HttpServletResponse response) throws IOException, ServletException {
-
+        System.out.println("jetty doHandle");
         HttpRequestWrapper wrapper = new HttpRequestWrapper(request);
         filter.doFilter(wrapper, response, null);
 

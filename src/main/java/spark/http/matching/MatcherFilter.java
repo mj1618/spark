@@ -18,6 +18,7 @@ package spark.http.matching;
 
 import java.io.IOException;
 
+import javax.servlet.AsyncContext;
 import javax.servlet.Filter;
 import javax.servlet.FilterChain;
 import javax.servlet.FilterConfig;
@@ -86,7 +87,7 @@ public class MatcherFilter implements Filter {
     public void doFilter(ServletRequest servletRequest,
                          ServletResponse servletResponse,
                          FilterChain chain) throws IOException, ServletException {
-
+        System.out.println("filtering");
         HttpServletRequest httpRequest = (HttpServletRequest) servletRequest;
         HttpServletResponse httpResponse = (HttpServletResponse) servletResponse;
 
@@ -111,6 +112,7 @@ public class MatcherFilter implements Filter {
         Response response = RequestResponseFactory.create(httpResponse);
 
         HttpMethod httpMethod = HttpMethod.get(httpMethodStr);
+        AsyncContext ac = httpRequest.startAsync();
 
         RouteContext context = RouteContext.create()
                 .withMatcher(routeMatcher)
@@ -122,74 +124,101 @@ public class MatcherFilter implements Filter {
                 .withResponseWrapper(responseWrapper)
                 .withResponse(response)
                 .withHttpMethod(httpMethod);
-
         try {
-            try {
 
-                BeforeFilters.execute(context);
-                Routes.execute(context);
-                AfterFilters.execute(context);
+            BeforeFilters.execute(context);
+            Routes.execute(context).whenComplete((x,y) -> {
 
-            } catch (HaltException halt) {
 
-                Halt.modify(httpResponse, body, halt);
-
-            } catch (Exception generalException) {
-
-                GeneralError.modify(
+                try {
+                    AfterFilters.execute(context);
+                } catch (Exception e) {
+                    GeneralError.modify(
                         httpRequest,
                         httpResponse,
                         body,
                         requestWrapper,
                         responseWrapper,
-                        generalException);
-
-            }
-
-            // If redirected and content is null set to empty string to not throw NotConsumedException
-            if (body.notSet() && responseWrapper.isRedirected()) {
-                body.set("");
-            }
-
-            if (body.notSet() && hasOtherHandlers) {
-                if (servletRequest instanceof HttpRequestWrapper) {
-                    ((HttpRequestWrapper) servletRequest).notConsumed(true);
-                    return;
+                        e);
                 }
-            }
 
-            if (body.notSet()) {
-                LOG.info("The requested route [{}] has not been mapped in Spark for {}: [{}]",
-                         uri, ACCEPT_TYPE_REQUEST_MIME_HEADER, acceptType);
-                httpResponse.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                try {
 
-                if (CustomErrorPages.existsFor(404)) {
-                    requestWrapper.setDelegate(RequestResponseFactory.create(httpRequest));
-                    responseWrapper.setDelegate(RequestResponseFactory.create(httpResponse));
-                    body.set(CustomErrorPages.getFor(404, requestWrapper, responseWrapper));
-                } else {
-                    body.set(String.format(CustomErrorPages.NOT_FOUND));
+                    // If redirected and content is null set to empty string to not throw NotConsumedException
+                    if (body.notSet() && responseWrapper.isRedirected()) {
+                        body.set("");
+                    }
+
+                    if (body.notSet() && hasOtherHandlers) {
+                        if (servletRequest instanceof HttpRequestWrapper) {
+                            ((HttpRequestWrapper) servletRequest).notConsumed(true);
+                            return;
+                        }
+                    }
+
+                    System.out.println("body: "+body.get());
+
+                    if (body.notSet()) {
+                        LOG.info("The requested route [{}] has not been mapped in Spark for {}: [{}]",
+                            uri, ACCEPT_TYPE_REQUEST_MIME_HEADER, acceptType);
+                        httpResponse.setStatus(HttpServletResponse.SC_NOT_FOUND);
+
+                        if (CustomErrorPages.existsFor(404)) {
+                            requestWrapper.setDelegate(RequestResponseFactory.create(httpRequest));
+                            responseWrapper.setDelegate(RequestResponseFactory.create(httpResponse));
+                            body.set(CustomErrorPages.getFor(404, requestWrapper, responseWrapper));
+                        } else {
+                            body.set(String.format(CustomErrorPages.NOT_FOUND));
+                        }
+                    }
+                } finally {
+                    try {
+                        AfterAfterFilters.execute(context);
+                    } catch (Exception generalException) {
+                        GeneralError.modify(
+                            httpRequest,
+                            httpResponse,
+                            body,
+                            requestWrapper,
+                            responseWrapper,
+                            generalException);
+                    }
                 }
-            }
-        } finally {
-            try {
-                AfterAfterFilters.execute(context);
-            } catch (Exception generalException) {
-                GeneralError.modify(
-                        httpRequest,
-                        httpResponse,
-                        body,
-                        requestWrapper,
-                        responseWrapper,
-                        generalException);
-            }
+
+                if (body.isSet()) {
+                    try {
+                        body.serializeTo(httpResponse, serializerChain, httpRequest);
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                } else if (chain != null) {
+                    try {
+                        chain.doFilter(httpRequest, httpResponse);
+                    } catch (IOException | ServletException e) {
+                        e.printStackTrace();
+                    }
+                }
+
+                ac.complete();
+            });
+
+
+        } catch (HaltException halt) {
+
+            Halt.modify(httpResponse, body, halt);
+
+        } catch (Exception generalException) {
+
+            GeneralError.modify(
+                httpRequest,
+                httpResponse,
+                body,
+                requestWrapper,
+                responseWrapper,
+                generalException);
+
         }
 
-        if (body.isSet()) {
-            body.serializeTo(httpResponse, serializerChain, httpRequest);
-        } else if (chain != null) {
-            chain.doFilter(httpRequest, httpResponse);
-        }
     }
 
     private String getHttpMethodFrom(HttpServletRequest httpRequest) {

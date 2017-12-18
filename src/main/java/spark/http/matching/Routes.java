@@ -22,12 +22,16 @@ import spark.RouteImpl;
 import spark.route.HttpMethod;
 import spark.routematch.RouteMatch;
 
+import javax.servlet.AsyncContext;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Future;
+
 /**
  * Created by Per Wendel on 2016-01-28.
  */
 final class Routes {
 
-    static void execute(RouteContext context) throws Exception {
+    static CompletableFuture execute(RouteContext context) throws Exception {
 
         Object content = context.body().get();
 
@@ -59,6 +63,10 @@ final class Routes {
                 context.responseWrapper().setDelegate(context.response());
 
                 Object element = route.handle(context.requestWrapper(), context.responseWrapper());
+                if (element instanceof CompletableFuture) {
+                    CompletableFuture future = ((CompletableFuture) element);
+                    return future.thenApply(asyncResult -> handleAsyncResult(asyncResult, context, route));
+                }
                 if (!context.responseWrapper().isRedirected()) {
                 	result = route.render(element);
                 }
@@ -78,6 +86,43 @@ final class Routes {
         }
 
         context.body().set(content);
+        return CompletableFuture.completedFuture(null);
     }
+
+    private static Object handleAsyncResult(Object asyncElement, RouteContext context, RouteImpl route) {
+        Object content = context.body().get();
+        Object result = null;
+        System.out.println("here!"+asyncElement);
+        if (!context.responseWrapper().isRedirected()) {
+            try {
+                result = route.render(asyncElement);
+            } catch (Exception e) {
+                System.out.println("exception!");
+                GeneralError.modify(
+                    context.httpRequest(),
+                    context.responseWrapper().raw(),
+                    context.body(),
+                    context.requestWrapper(),
+                    context.responseWrapper(),
+                    e);
+            }
+        }
+
+        if (result != null) {
+            content = result;
+
+            if (content instanceof String) {
+                String contentStr = (String) content;
+
+                if (!contentStr.equals("")) {
+                    System.out.println("setting response wrapper");
+                    context.responseWrapper().body(contentStr);
+                }
+            }
+        }
+        context.body().set(content);
+        return null;
+    }
+
 
 }
